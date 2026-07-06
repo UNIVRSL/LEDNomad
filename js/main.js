@@ -14,23 +14,8 @@
   document.getElementById('year').textContent = new Date().getFullYear();
 
   /* ---------- custom cursor ---------- */
-  const cursor = document.getElementById('cursor');
   if (matchMedia('(hover:hover) and (pointer:fine)').matches && !reduced) {
     document.body.classList.add('cursor-custom');
-    let x = 0, y = 0, cx = 0, cy = 0, on = false;
-    addEventListener('mousemove', e => {
-      x = e.clientX; y = e.clientY;
-      if (!on) { on = true; cursor.classList.add('is-on'); cx = x; cy = y; }
-    }, { passive: true });
-    (function follow() {
-      cx += (x - cx) * 0.18; cy += (y - cy) * 0.18;
-      cursor.style.transform = `translate(${cx}px,${cy}px) translate(-50%,-50%)`;
-      requestAnimationFrame(follow);
-    })();
-    document.querySelectorAll('a,button').forEach(el => {
-      el.addEventListener('mouseenter', () => cursor.classList.add('is-hover'));
-      el.addEventListener('mouseleave', () => cursor.classList.remove('is-hover'));
-    });
   }
 
   /* ---------- kelvin control ---------- */
@@ -76,7 +61,6 @@
   /* ---------- work carousel: continuous conveyor + LED-strip navigator ---------- */
   const track = document.getElementById('workTrack');
   if (track) {
-    const nav = document.getElementById('workNav');
     const originals = [...track.querySelectorAll('.slide')];
     const N = originals.length;
 
@@ -103,27 +87,43 @@
       else if (track.scrollLeft < 0) track.scrollLeft += sw;
     };
 
-    /* --- LED-strip dots (one per original photo) --- */
-    const dots = originals.map((s, i) => {
-      const b = document.createElement('button');
-      b.className = 'carousel__dot';
-      b.setAttribute('role', 'tab');
-      b.setAttribute('aria-label', `Go to installation ${i + 1} of ${N}`);
-      b.appendChild(document.createElement('i'));
-      b.addEventListener('click', () => goToPhoto(i));
-      nav.appendChild(b);
-      return b;
-    });
-    let activeIdx = -1;
-    const setActiveDot = i => {
+    /* --- scrubber bar navigator --- */
+    const bar = document.getElementById('workBar');
+    const fill = document.getElementById('workBarFill');
+    bar.style.setProperty('--seg', (100 / N) + '%');
+    let activeIdx = -1, focusIdx = -1, barHover = false, lastBarI = -1;
+
+    const setFill = i => {              // slide the glowing highlight to photo i's zone
       if (i === activeIdx) return;
       activeIdx = i;
-      dots.forEach((d, di) => {
-        d.classList.toggle('is-active', di === i);
-        if (di === i) d.setAttribute('aria-current', 'true');
-        else d.removeAttribute('aria-current');
-      });
+      fill.style.left = (i * 100 / N) + '%';
+      bar.setAttribute('aria-valuenow', i + 1);
     };
+    const setFocus = i => {             // enlarge every copy of photo i (-1 = none)
+      if (i === focusIdx) return;
+      focusIdx = i;
+      allSlides.forEach((s, k) => s.classList.toggle('is-focus', i >= 0 && (k % N) === i));
+    };
+    const barIndex = e => {
+      const r = bar.getBoundingClientRect();
+      return Math.max(0, Math.min(N - 1, Math.floor((e.clientX - r.left) / r.width * N)));
+    };
+    const scrubTo = i => { if (i === lastBarI) return; lastBarI = i; setFill(i); setFocus(i); goToPhoto(i); };
+
+    bar.addEventListener('pointerenter', () => { barHover = true; paused = true; });
+    bar.addEventListener('pointerdown', e => { bar.setPointerCapture?.(e.pointerId); barHover = true; paused = true; scrubTo(barIndex(e)); });
+    bar.addEventListener('pointermove', e => { if (barHover) scrubTo(barIndex(e)); });
+    const barLeave = () => { barHover = false; paused = false; lastBarI = -1; setFocus(-1); };
+    bar.addEventListener('pointerleave', barLeave);
+    bar.addEventListener('pointerup', barLeave);
+    bar.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const i = ((activeIdx + (e.key === 'ArrowRight' ? 1 : -1)) % N + N) % N;
+      paused = true; setFill(i); setFocus(i); goToPhoto(i);
+    });
+    bar.addEventListener('blur', () => { if (!barHover) { paused = false; setFocus(-1); } });
+
     const centeredPhoto = () => {
       const center = track.scrollLeft + track.clientWidth / 2;
       const base = allSlides[0].offsetLeft + slideW() / 2;
@@ -148,7 +148,7 @@
         track.scrollLeft += SPEED * dt;
         wrap();
       }
-      setActiveDot(centeredPhoto());
+      if (!barHover) setFill(centeredPhoto());
       raf = requestAnimationFrame(frame);
     };
     const startLoop = () => { if (!reduced && raf === null) { last = null; raf = requestAnimationFrame(frame); } };
@@ -163,13 +163,11 @@
         const d = Math.abs(target - track.scrollLeft);
         if (d < bestD) { bestD = d; bestTarget = target; }
       }
-      if (reduced) { track.scrollLeft = bestTarget; wrap(); setActiveDot(i); return; }
+      if (reduced) { track.scrollLeft = bestTarget; wrap(); setFill(i); return; }
       tween = { from: track.scrollLeft, dist: bestTarget - track.scrollLeft, t: 0, dur: 620 };
     };
 
-    /* --- pause only while dragging or aiming at nav dots --- */
-    nav.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') paused = true; });
-    nav.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') paused = false; });
+    /* --- pause only while dragging --- */
     document.addEventListener('visibilitychange', () => { document.hidden ? stopLoop() : startLoop(); });
 
     /* --- drag / swipe --- */
@@ -201,7 +199,7 @@
     track.addEventListener('touchend', () => setTimeout(() => { dragging = false; }, 60), { passive: true });
     track.addEventListener('click', e => { if (moved) e.preventDefault(); }, true);
 
-    setActiveDot(0);
+    setFill(0);
     startLoop();
     addEventListener('resize', wrap);
   }
